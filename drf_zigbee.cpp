@@ -9,7 +9,7 @@ DRF_Zigbee::DRF_Zigbee(uint8_t _rst_pin) : rst_pin(_rst_pin), pkt_head(buffer), 
 bool DRF_Zigbee::begin(Stream * ss, uint16_t _pan_id, uint16_t timeout) {
     port = ss;
     
-    port.setTimeout(DRF_ZIGBEE_WAIT_TIMEOUT);
+    port->setTimeout(DRF_ZIGBEE_WAIT_TIMEOUT);
     
     uint8_t test_cmd[] = {0xFC, 0x00, 0x91, 0x07, 0x97, 0xA7, 0xD2};
     uint8_t expected[] = {0x1, 0x2, 0x3, 0x4, 0x5};
