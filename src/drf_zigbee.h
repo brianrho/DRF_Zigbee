@@ -29,7 +29,7 @@ typedef enum {
 class DRF_Zigbee {
     public:
         DRF_Zigbee(uint8_t _rst_pin = 0);
-        bool begin(Stream * ss, uint16_t pan_id = 0, uint16_t timeout = 0);
+        bool begin(Stream * ss, uint16_t timeout = 0);
         uint16_t write(uint8_t c, uint16_t to_addr = DRF_ZIGBEE_COORDINATOR_ADDR);
         uint16_t write(const uint8_t * data, uint16_t len, uint16_t to_addr = DRF_ZIGBEE_COORDINATOR_ADDR);
         uint16_t read(uint8_t * data, uint16_t len, uint16_t from_addr = DRF_ZIGBEE_ANY_ADDR);
@@ -42,7 +42,7 @@ class DRF_Zigbee {
         void reset(void);
 
     private:
-        uint8_t buffer[ZIGBEE_BUF_SZ];
+        uint8_t buffer[DRF_ZIGBEE_BUF_SZ];
         
         uint16_t pan_id;
         uint16_t self_addr;

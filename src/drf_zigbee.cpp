@@ -6,10 +6,13 @@ DRF_Zigbee::DRF_Zigbee(uint8_t _rst_pin) : rst_pin(_rst_pin), pkt_head(buffer), 
     
 }
 
-bool DRF_Zigbee::begin(Stream * ss, uint16_t _pan_id, uint16_t timeout) {
+bool DRF_Zigbee::begin(Stream * ss, uint16_t timeout) {
     port = ss;
     
-    port->setTimeout(DRF_ZIGBEE_WAIT_TIMEOUT);
+    if (timeout)
+        port->setTimeout(timeout);
+    else
+        port->setTimeout(DRF_ZIGBEE_WAIT_TIMEOUT);
     
     uint8_t test_cmd[] = {0xFC, 0x00, 0x91, 0x07, 0x97, 0xA7, 0xD2};
     uint8_t expected[] = {0x1, 0x2, 0x3, 0x4, 0x5};
@@ -21,16 +24,13 @@ bool DRF_Zigbee::begin(Stream * ss, uint16_t _pan_id, uint16_t timeout) {
     
     //while (port->available() == 0);
     
-    port->read(buffer, DRF_ZIGBEE_BUF_SZ);
+    port->readBytes(buffer, DRF_ZIGBEE_BUF_SZ);
     
     if (memcmp(buffer, expected, 5) != 0) {
         return false;
     }
     
     while (port->read() != -1);
-
-    if (_pan_id != 0)
-        set_pan_id(_pan_id);
 
     return true;
 }
@@ -80,7 +80,7 @@ uint16_t DRF_Zigbee::read(uint8_t * data, uint16_t len, uint16_t from_addr) {
         }
 
         rem_buf_sz = DRF_ZIGBEE_BUF_SZ - (wptr - buffer);
-        rlen = port->read(wptr, rem_buf_sz);
+        rlen = port->readBytes(wptr, rem_buf_sz);
 
         if (rlen == 0)
             return count;
@@ -178,7 +178,7 @@ uint16_t DRF_Zigbee::get_pan_id(void) {
     buffer[6] = (uint8_t)(chksum & 0xff);
     port->write(buffer, 7);
     
-    if (port->read(buffer, 2) == 2) {
+    if (port->readBytes(buffer, 2) == 2) {
         pan_id = (((uint16_t)buffer[0] << 8) | buffer[1]);
         return pan_id;
     }
@@ -213,7 +213,7 @@ uint16_t DRF_Zigbee::get_self_address(void) {
     buffer[6] = (uint8_t)(chksum & 0xff);
     port->write(buffer, 7);
     
-    if (port->read(buffer, 2) == 2) {
+    if (port->readBytes(buffer, 2) == 2) {
         self_addr = (((uint16_t)buffer[0] << 8) | buffer[1]);
         return self_addr;
     }
