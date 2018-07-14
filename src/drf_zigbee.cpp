@@ -121,8 +121,9 @@ uint16_t DRF_Zigbee::write_packet(const uint8_t * data, uint16_t len, uint16_t t
 
 #if defined(ARDUINO_ARCH_ESP32) || defined(ARDUINO_ARCH_ESP8266)
 /* Just like write() except there's no delay,
- * Packets get buffered (at most 32) and are finally sent when flush() is called
- * Not tested yet
+ * Packets get buffered and are finally sent when flush() is called
+ * At most 32 packets of DRF_ZIGBEE_MAX_PKT_SZ bytes are buffered (1k bytes)
+ * Returns number of bytes buffered
  */
  
 uint16_t DRF_Zigbee::buffered_write(const uint8_t * data, uint16_t len, uint16_t to_addr) {
@@ -167,13 +168,16 @@ void DRF_Zigbee::flush(void) {
 
 #endif
 
+// Reads a complete packet and returns the packet length and source address
+// TODO: use a state machine
 uint16_t DRF_Zigbee::read_packet(uint8_t * data, uint16_t len, uint16_t * from_addr) {
     uint16_t rem_buf_sz;
     uint16_t to_read, avail, rlen = 0;
     bool need_more_data = false;
     
     while (true) {
-        if (port->available() == 0)
+        avail = port->available();
+        if (avail == 0)
             return 0;
         
         if (pkt_head != buffer) {
@@ -182,26 +186,25 @@ uint16_t DRF_Zigbee::read_packet(uint8_t * data, uint16_t len, uint16_t * from_a
             pkt_head = buffer;
         }
         
-        avail = port->available();
         rem_buf_sz = DRF_ZIGBEE_BUF_SZ - (wptr - buffer);
         
         to_read = (avail > rem_buf_sz) ? rem_buf_sz : avail;
         rlen = port->readBytes(wptr, to_read);
-
-        /*if (rlen == 0 && (wptr == pkt_head || need_more_data))          // if we read nothing, and theres nothing else left to parse
-            return 0;*/
-        
         wptr += rlen;
+
+        if (rlen == 0 && need_more_data)          // if we read nothing, and theres nothing else left to parse
+            return 0;
+        
         need_more_data = false;
 
         while (pkt_head < wptr) {
             uint16_t remn = wptr - pkt_head;
             uint8_t * new_pkt = (uint8_t *)memchr2(pkt_head, DRF_ZIGBEE_DATA_TRANSFER_CMD, remn);
             if (new_pkt == NULL) {
-                if (pkt_head == buffer && wptr - pkt_head == DRF_ZIGBEE_BUF_SZ) {                // if buffer is full of unparsed data, none being a packet header
+                if (pkt_head == buffer && wptr - pkt_head == DRF_ZIGBEE_BUF_SZ) {    // if buffer is full of unparsed data, none being a packet header
                     wptr = buffer;
                 }
-                pkt_head = wptr;                    // advance to the write ptr wherever it is
+                pkt_head = wptr;                    // consume all the garbage and advance to the write ptr wherever it is
                 break;
             }
             if (wptr - new_pkt < 4) {               // message header is not all present?
@@ -211,7 +214,7 @@ uint16_t DRF_Zigbee::read_packet(uint8_t * data, uint16_t len, uint16_t * from_a
             if ((new_pkt[2] == (self_addr >> 8) && new_pkt[3] == (self_addr & 0xff))) {      // message is for us?
                 uint8_t plen = new_pkt[1];
                 if (plen > DRF_ZIGBEE_MAX_PKT_SZ) {          // make sure packet size is < 32
-                    pkt_head++;
+                    pkt_head = new_pkt + 1;                  // advance past the current pkt header(?)
                     continue;
                 }
                 
@@ -219,7 +222,7 @@ uint16_t DRF_Zigbee::read_packet(uint8_t * data, uint16_t len, uint16_t * from_a
                     return 0;
                 }
                 
-                if (plen + 4 + 2 > remn) {                    // if we havent read the entire packet, try to read more
+                if (plen + 4 + 2 > wptr - new_pkt) {        // if we havent read the entire packet, try to read more
                     need_more_data = true;
                     break;
                 }
@@ -232,7 +235,7 @@ uint16_t DRF_Zigbee::read_packet(uint8_t * data, uint16_t len, uint16_t * from_a
                 return plen;
             }
             else
-                pkt_head++;
+                pkt_head = new_pkt + 1;
             
             yield();
         }

@@ -7,8 +7,7 @@ DRFFifo::DRFFifo(drf_packet_t * buf, uint16_t sz) : head(0), tail(0), count(0), 
     
 }
 
-//This reads 'nbytes' bytes from the FIFO
-//The number of bytes read is returned
+// Dequeues a single packet of at most DRF_PKT_SZ bytes
 uint16_t DRFFifo::dequeue(drf_packet_t * pkt) {
     if (count == 0)
         return 0;
@@ -22,9 +21,7 @@ uint16_t DRFFifo::dequeue(drf_packet_t * pkt) {
     return 1;
 }
 
-//This writes up to 'nbytes' bytes to the FIFO
-//If the head runs in to the tail, not all bytes are written
-//The number of bytes written is returned
+// Enqueues a single packet of at most DRF_PKT_SZ bytes
 uint16_t DRFFifo::enqueue(const drf_packet_t * pkt) {
     if (count == buffer_sz)
         return 0;
@@ -38,6 +35,7 @@ uint16_t DRFFifo::enqueue(const drf_packet_t * pkt) {
     return 1;
 }
 
+// Returns number of queued packets
 uint16_t DRFFifo::available(void) {
     return count;
 }

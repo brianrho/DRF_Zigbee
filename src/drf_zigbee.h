@@ -22,7 +22,7 @@
 #define DRF_ZIGBEE_INTER_PACKET_INTERVAL    50
 #define DRF_ZIGBEE_RESET_DELAY              3000
 
-#define DRF_ZIGBEE_BUF_SZ                   (DRF_ZIGBEE_MAX_PKT_SZ + 4 + 2)
+#define DRF_ZIGBEE_BUF_SZ                   (64)    //(DRF_ZIGBEE_MAX_PKT_SZ + 4 + 2)
 #define DRF_ZIGBEE_DATA_TRANSFER_CMD        0xFD
 
 #define DRF_ZIGBEE_JOIN_ANY                 0xFFFF
