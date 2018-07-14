@@ -1,6 +1,7 @@
 #include <string.h>
 #include "drf_zigbee.h"
 
+// Because there's no memchr in ESP8266 core
 static uint8_t * memchr2(void * p, uint8_t ch, size_t size)
 {
     uint8_t * ptr = (uint8_t *)p;
@@ -31,6 +32,7 @@ DRF_Zigbee::DRF_Zigbee(uint8_t _rst_pin) : out_fifo(_out_buf, DRF_ZIGBEE_MAX_BUF
 }
 #endif
 
+// Timeout should be at least 500ms; can probably be shortened with more tests
 bool DRF_Zigbee::begin(Stream * ss, uint16_t _pan_id, uint16_t timeout) {
     port = ss;
     
@@ -105,6 +107,7 @@ uint16_t DRF_Zigbee::write(const uint8_t * data, uint16_t len, uint16_t to_addr)
     return written;
 }
 
+// Writes a single packet
 uint16_t DRF_Zigbee::write_packet(const uint8_t * data, uint16_t len, uint16_t to_addr) {
     uint8_t to_write;
     cmdbuf[0] = DRF_ZIGBEE_DATA_TRANSFER_CMD;
@@ -168,8 +171,13 @@ void DRF_Zigbee::flush(void) {
 
 #endif
 
-// Reads a complete packet and returns the packet length and source address
-// TODO: use a state machine
+/* Reads a complete packet and returns the packet length and source address.
+ * To read anything longer than 32 bytes in a single call, it relies on higher
+ * application code to call first check available(), and then call 
+ * read_packet() repeatedly until it returns 0 which means there's nothing valid left to read
+ * or the user's buffer is not sufficient.
+ * TODO: use a state machine instead
+ */
 uint16_t DRF_Zigbee::read_packet(uint8_t * data, uint16_t len, uint16_t * from_addr) {
     uint16_t rem_buf_sz;
     uint16_t to_read, avail, rlen = 0;
@@ -177,10 +185,10 @@ uint16_t DRF_Zigbee::read_packet(uint8_t * data, uint16_t len, uint16_t * from_a
     
     while (true) {
         avail = port->available();
-        if (avail == 0)
-            return 0;
+        /*if (avail == 0)
+            return 0;*/
         
-        if (pkt_head != buffer) {
+        if (pkt_head != buffer) {               // drag packet head to start of buffer, to make space
             memmove(buffer, pkt_head, wptr - pkt_head);
             wptr = buffer + (wptr - pkt_head);
             pkt_head = buffer;
@@ -192,9 +200,9 @@ uint16_t DRF_Zigbee::read_packet(uint8_t * data, uint16_t len, uint16_t * from_a
         rlen = port->readBytes(wptr, to_read);
         wptr += rlen;
 
-        if (rlen == 0 && need_more_data)          // if we read nothing, and theres nothing else left to parse
+        if ((rlen == 0 && need_more_data) || wptr == pkt_head)          // if we read nothing or theres nothing else left to parse
             return 0;
-        
+            
         need_more_data = false;
 
         while (pkt_head < wptr) {
@@ -207,14 +215,16 @@ uint16_t DRF_Zigbee::read_packet(uint8_t * data, uint16_t len, uint16_t * from_a
                 pkt_head = wptr;                    // consume all the garbage and advance to the write ptr wherever it is
                 break;
             }
-            if (wptr - new_pkt < 4) {               // message header is not all present?
+            
+            pkt_head = new_pkt;
+            if (wptr - pkt_head < 4) {               // message header is not all present?
                 need_more_data = true;
                 break;
             }
-            if ((new_pkt[2] == (self_addr >> 8) && new_pkt[3] == (self_addr & 0xff))) {      // message is for us?
-                uint8_t plen = new_pkt[1];
+            if ((pkt_head[2] == (self_addr >> 8) && pkt_head[3] == (self_addr & 0xff))) {      // message is for us?
+                uint8_t plen = pkt_head[1];
                 if (plen > DRF_ZIGBEE_MAX_PKT_SZ) {          // make sure packet size is < 32
-                    pkt_head = new_pkt + 1;                  // advance past the current pkt header(?)
+                    pkt_head++;                  // advance past the current pkt header(?)
                     continue;
                 }
                 
@@ -222,31 +232,40 @@ uint16_t DRF_Zigbee::read_packet(uint8_t * data, uint16_t len, uint16_t * from_a
                     return 0;
                 }
                 
-                if (plen + 4 + 2 > wptr - new_pkt) {        // if we havent read the entire packet, try to read more
+                if (plen + 4 + 2 > wptr - pkt_head) {        // if we havent read the entire packet, try to read more
                     need_more_data = true;
                     break;
                 }
 
                 if (from_addr != NULL)
-                    *from_addr = ((uint16_t)new_pkt[plen + 4] << 8) | new_pkt[plen + 4 + 1];
+                    *from_addr = ((uint16_t)pkt_head[plen + 4] << 8) | pkt_head[plen + 4 + 1];
 
-                memcpy(data, &new_pkt[4], plen);
-                pkt_head = new_pkt + 4 + plen + 2;
+                memcpy(data, &pkt_head[4], plen);
+                pkt_head += 4 + plen + 2;                   // advance past header, len, dest addr, content, src addr
                 return plen;
             }
             else
-                pkt_head = new_pkt + 1;
+                pkt_head++;                 // advance past current pkt header
             
             yield();
         }
     }
 }
 
-
+/* Only checks if there are unread bytes from Stream.
+ * Note that even if there are still complete packets left in the library's buffer,
+ * available() can still return false because it only checks the Stream port.
+ * So it's probably best to call read_packet() repeatedly till it returns 0
+ * to be sure there's really nothing left to read
+ * TODO: provide an available() that checks if there are unread packets
+ */
 uint16_t DRF_Zigbee::available(void) {
     return port->available();
 }
 
+/* First tries to restart module using its reset pin if one was given,
+ * next tries to use a command (not supported on all modules)
+ */
 void DRF_Zigbee::reset(void) {
     if (rst_pin) {
         digitalWrite(rst_pin, LOW);
@@ -268,6 +287,7 @@ void DRF_Zigbee::reset(void) {
     delay(DRF_ZIGBEE_RESET_DELAY);
 }
 
+// Sets the pan_id and restarts the module
 void DRF_Zigbee::set_pan_id(uint16_t _pan_id) {
     const uint8_t preamble[] = {0xfc, 0x02, 0x91, 0x01};
     memcpy(cmdbuf, preamble, 4);
@@ -289,6 +309,7 @@ void DRF_Zigbee::set_pan_id(uint16_t _pan_id) {
     reset();
 }
 
+// Gets module's pan id
 uint16_t DRF_Zigbee::get_pan_id(void) {
     while (port->read() != -1);
     
@@ -310,6 +331,7 @@ uint16_t DRF_Zigbee::get_pan_id(void) {
     return 0;
 }
 
+// Sets module's baud rate and restarts it
 void DRF_Zigbee::set_baud_rate(DRF_BAUD_t baud) {
     const uint8_t preamble[]  = {0xfc, 0x1, 0x91, 0x6, 0x00, 0xf6};
     memcpy(cmdbuf, preamble, 6);
@@ -327,6 +349,7 @@ void DRF_Zigbee::set_baud_rate(DRF_BAUD_t baud) {
     reset();
 }
 
+// Gets module's short address
 uint16_t DRF_Zigbee::get_self_address(void) {
     while (port->read() != -1);
     

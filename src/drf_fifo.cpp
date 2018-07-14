@@ -1,7 +1,7 @@
 #include <string.h>
 #include "drf_fifo.h"
 
-//This initializes the FIFO structure with the given buffer and size
+// Takes a pointer to an array of drf_packet_t structs and the size of the array
 DRFFifo::DRFFifo(drf_packet_t * buf, uint16_t sz) : head(0), tail(0), count(0), bufptr(buf), buffer_sz(sz)
 {
     
