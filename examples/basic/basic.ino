@@ -49,11 +49,13 @@ void loop(void) {
     
 #if (ROLE == Z_COORDINATOR)
     uint16_t addr;
-    count = bee.read_packet((uint8_t *)recvbuf, RECV_BUF_SZ, &addr);
-    if (count) {
-      Serial.print("From 0x"); Serial.print(addr, HEX); Serial.print(": ");
-      Serial.write((uint8_t *)recvbuf, count);
-      Serial.println();
+    while (bee.available()) {
+      count = bee.read_packet((uint8_t *)recvbuf, RECV_BUF_SZ, &addr);
+      if (count) {
+        Serial.print("From 0x"); Serial.print(addr, HEX); Serial.print(": ");
+        Serial.write((uint8_t *)recvbuf, count);
+        Serial.println();
+      }
     }
 #elif (ROLE == Z_ROUTER)
     while (Serial.available()) {

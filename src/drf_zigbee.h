@@ -30,6 +30,9 @@
 #define DRF_ZIGBEE_NO_ADDR                  0xFFFE
 #define DRF_ZIGBEE_COORDINATOR_ADDR         0x0000
 
+#define DRF_ZIGBEE_READ_FAIL                (-1)
+#define DRF_ZIGBEE_READ_ZERO                (-2)
+
 typedef enum {
     DRF_BAUD_9600 = 1,
     DRF_BAUD_19200,
@@ -45,8 +48,10 @@ class DRF_Zigbee {
         uint16_t write(uint8_t c, uint16_t to_addr = DRF_ZIGBEE_COORDINATOR_ADDR);
         uint16_t write(const uint8_t * data, uint16_t len, uint16_t to_addr = DRF_ZIGBEE_COORDINATOR_ADDR);
         uint16_t write_packet(const uint8_t * data, uint16_t len, uint16_t to_addr);
-        uint16_t read_packet(uint8_t * data, uint16_t len, uint16_t * from_addr);
+        int16_t read_packet(uint8_t * data, uint16_t len, uint16_t * from_addr);
         uint16_t available(void);
+        uint16_t unread_available(void);
+        uint16_t pkt_available(void);
         #if defined(ARDUINO_ARCH_ESP32) || defined(ARDUINO_ARCH_ESP8266)
             uint16_t buffered_write(const uint8_t * data, uint16_t len, uint16_t to_addr);
             void flush(void);
@@ -58,8 +63,8 @@ class DRF_Zigbee {
         void reset(void);
 
     private:
-        uint8_t buffer[DRF_ZIGBEE_BUF_SZ];
-        uint8_t cmdbuf[DRF_ZIGBEE_BUF_SZ];
+        uint8_t ibuf[DRF_ZIGBEE_BUF_SZ];
+        uint8_t obuf[DRF_ZIGBEE_BUF_SZ];
         
         #if defined(ARDUINO_ARCH_ESP32) || defined(ARDUINO_ARCH_ESP8266)
             DRFFifo out_fifo;

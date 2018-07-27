@@ -1,6 +1,11 @@
 #include <string.h>
 #include "drf_zigbee.h"
 
+typedef enum {
+	DRF_ZIGBEE_STATE_READ_HEADER,
+	DRF_ZIGBEE_STATE_READ_CONTENTS,
+} packeteer_state_e;
+
 // Because there's no memchr in ESP8266 core
 static uint8_t * memchr2(void * p, uint8_t ch, size_t size)
 {
@@ -112,6 +117,9 @@ uint16_t DRF_Zigbee::write_packet(const uint8_t * data, uint16_t len, uint16_t t
     uint8_t to_write;
     cmdbuf[0] = DRF_ZIGBEE_DATA_TRANSFER_CMD;
 
+    if (!len)               // no zero-length writes allowed
+        return 0;
+    
     to_write = (len > DRF_ZIGBEE_MAX_PKT_SZ) ? DRF_ZIGBEE_MAX_PKT_SZ : len;
 
     cmdbuf[1] = to_write;
@@ -178,7 +186,7 @@ void DRF_Zigbee::flush(void) {
  * or the user's buffer is not sufficient.
  * TODO: use a state machine instead
  */
-uint16_t DRF_Zigbee::read_packet(uint8_t * data, uint16_t len, uint16_t * from_addr) {
+int16_t DRF_Zigbee::read_packet(uint8_t * data, uint16_t len, uint16_t * from_addr) {
     uint16_t rem_buf_sz;
     uint16_t to_read, avail, rlen = 0;
     bool need_more_data = false;
@@ -199,9 +207,11 @@ uint16_t DRF_Zigbee::read_packet(uint8_t * data, uint16_t len, uint16_t * from_a
         to_read = (avail > rem_buf_sz) ? rem_buf_sz : avail;
         rlen = port->readBytes(wptr, to_read);
         wptr += rlen;
+        
+        yield();
 
         if ((rlen == 0 && need_more_data) || wptr == pkt_head)          // if we read nothing or theres nothing else left to parse
-            return 0;
+            return DRF_ZIGBEE_READ_FAIL;
             
         need_more_data = false;
 
@@ -209,58 +219,177 @@ uint16_t DRF_Zigbee::read_packet(uint8_t * data, uint16_t len, uint16_t * from_a
             uint16_t remn = wptr - pkt_head;
             uint8_t * new_pkt = (uint8_t *)memchr2(pkt_head, DRF_ZIGBEE_DATA_TRANSFER_CMD, remn);
             if (new_pkt == NULL) {
-                if (pkt_head == buffer && wptr - pkt_head == DRF_ZIGBEE_BUF_SZ) {    // if buffer is full of unparsed data, none being a packet header
-                    wptr = buffer;
-                }
                 pkt_head = wptr;                    // consume all the garbage and advance to the write ptr wherever it is
                 break;
             }
             
             pkt_head = new_pkt;
-            if (wptr - pkt_head < 4) {               // message header is not all present?
+            if (wptr - pkt_head < 4) {               // message header section is not all present?
                 need_more_data = true;
                 break;
             }
-            if ((pkt_head[2] == (self_addr >> 8) && pkt_head[3] == (self_addr & 0xff))) {      // message is for us?
-                uint8_t plen = pkt_head[1];
-                if (plen > DRF_ZIGBEE_MAX_PKT_SZ) {          // make sure packet size is < 32
-                    pkt_head++;                  // advance past the current pkt header(?)
-                    continue;
-                }
-                
-                if (plen > len) {                           // if there isnt enough space in the buffer
-                    return 0;
-                }
-                
-                if (plen + 4 + 2 > wptr - pkt_head) {        // if we havent read the entire packet, try to read more
-                    need_more_data = true;
-                    break;
-                }
-
-                if (from_addr != NULL)
-                    *from_addr = ((uint16_t)pkt_head[plen + 4] << 8) | pkt_head[plen + 4 + 1];
-
-                memcpy(data, &pkt_head[4], plen);
-                pkt_head += 4 + plen + 2;                   // advance past header, len, dest addr, content, src addr
-                return plen;
-            }
-            else
-                pkt_head++;                 // advance past current pkt header
             
-            yield();
+            if (pkt_head[2] != (self_addr >> 8) || pkt_head[3] != (self_addr & 0xff)) {     // message is not for us?
+                pkt_head++;                          // advance past current pkt header
+                continue;
+            }
+            uint8_t plen = pkt_head[1];
+            if (plen > DRF_ZIGBEE_MAX_PKT_SZ) {          // make sure packet size is < 32
+                pkt_head++;                  // advance past the current pkt header(?)
+                continue;
+            }
+            
+            if (plen > len) {                           // if there isnt enough space in the buffer
+                return 0;
+            }
+            
+            if (plen + 4 + 2 > wptr - pkt_head) {        // if we havent read the entire packet, try to read more
+                need_more_data = true;
+                break;
+            }
+
+            if (from_addr != NULL)
+                *from_addr = ((uint16_t)pkt_head[plen + 4] << 8) | pkt_head[plen + 4 + 1];
+
+            memcpy(data, &pkt_head[4], plen);
+            pkt_head += 4 + plen + 2;                   // advance past header, len, dest addr, content, src addr
+            if (plen == 0)
+                continue;                               // if we somehow read an empty packet, move on
+            return plen;
         }
     }
 }
 
-/* Only checks if there are unread bytes from Stream.
- * Note that even if there are still complete packets left in the library's buffer,
- * available() can still return false because it only checks the Stream port.
- * So it's probably best to call read_packet() repeatedly till it returns 0
- * to be sure there's really nothing left to read
- * TODO: provide an available() that checks if there are unread packets
+int16_t DRF_Zigbee::read_packet(uint8_t * data, uint16_t len, uint16_t * from_addr) {
+    static uint16_t src_addr = 0;
+    static uint16_t dest_addr = 0;
+    static uint16_t to_read = 0;
+    
+    while (true) {
+        switch (read_state) {
+            case DRF_ZIGBEE_STATE_READ_HEADER:
+                if (port->available() < 4)
+                    return DRF_ZIGBEE_READ_FAIL;
+                if (port->read() != DRF_ZIGBEE_DATA_TRANSFER_CMD)
+                    return DRF_ZIGBEE_READ_FAIL;
+                
+                to_read = port->read();
+                if (to_read > DRF_ZIGBEE_MAX_PKT_SZ)
+                    return DRF_ZIGBEE_READ_FAIL;
+                
+                dest_addr = 0;
+                port->readBytes(ibuf, 2);
+                dest_addr = ((uint16_t)ibuf[0] << 8) | ibuf[1];
+                read_state = DRF_ZIGBEE_STATE_READ_CONTENTS;
+                break;
+                
+            case DRF_ZIGBEE_STATE_READ_CONTENTS:
+                if (port->available() < to_read + 2)            // +2 for src address
+                    return DRF_ZIGBEE_READ_FAIL;
+                if (to_read > len)
+                    return 0;
+                port->readBytes(data, to_read);
+                port->readBytes(ibuf, 2);
+                src_addr = ((uint16_t)ibuf[0] << 8) | ibuf[1];
+                *from_addr = src_addr;
+                
+                read_state = DRF_ZIGBEE_STATE_READ_HEADER;
+                return to_read;
+            default:
+                break;
+        }
+    }
+}
+
+/* Checks if there's any packet available and returns
+ * its length if so. Else, it returns the number of unread
+ * Stream bytes. A return value > 0 means a read_packet()
+ * can be attempted, though there's no guarantee that it will succeed. 
+ * However if this function ever returns 0, it's guaranteed that
+ * there's nothing useful to read
  */
 uint16_t DRF_Zigbee::available(void) {
     return port->available();
+}
+
+/* Generic available(): Only checks if there are unread bytes from Stream.
+ * Note that even if there are still complete packets left in the library's buffer,
+ * available() can still return false because it only checks the Stream port.
+ */
+uint16_t DRF_Zigbee::unread_available(void) {
+    return port->available();
+}
+
+/* Checks if there's a packet available in the library buffer
+ * If it returns a value > 0, this is the length of the content of the unread packet.
+ * Such a result guarantees that a read_packet() will succeed,
+ * provided a sufficient buffer is passed to it of course.
+ * Untested.
+ */
+ 
+uint16_t DRF_Zigbee::pkt_available(void)  {
+    while (pkt_head < wptr) {
+        uint16_t remn = wptr - pkt_head;
+        
+        uint8_t * new_pkt = (uint8_t *)memchr2(pkt_head, DRF_ZIGBEE_DATA_TRANSFER_CMD, remn);
+        pkt_head = new_pkt;         //dvdvnfdvjvDDDDDDdvvvvvvvvvvvvvvvvvvvvvvvvv
+        if (new_pkt == NULL) {              // if we didnt find the header
+            pkt_head = wptr;                // advance pkt head to meet write ptr
+            return 0;
+        }
+        if (wptr - new_pkt < 4)             // if we need more data
+            return 0;
+        if (new_pkt[2] != (self_addr >> 8) || new_pkt[3] != (self_addr & 0xff)) {       // if msg is not for us
+            pkt_head = new_pkt + 1;
+            continue;
+        }
+        uint8_t plen = new_pkt[1];
+        if (plen > DRF_ZIGBEE_MAX_PKT_SZ) {         // if its bigger than permissible packet size
+            pkt_head = new_pkt + 1;
+            continue;
+        }
+        if (plen + 4 + 2 > wptr - new_pkt)          // if we need more data to complete the packet
+            return 0;
+        if (plen == 0) {
+            pkt_head = 4 + new_pkt + plen + 2;      // no zero-length packets allowed
+            continue;
+        }
+        
+        return plen;
+    }
+    return 0;
+}
+
+uint16_t DRF_Zigbee::parse_buffer(uint8_t * pkt_loc) {
+    while (pkt_head < wptr) {
+        uint16_t remn = wptr - pkt_head;
+        
+        uint8_t * new_pkt = (uint8_t *)memchr2(pkt_head, DRF_ZIGBEE_DATA_TRANSFER_CMD, remn);
+        pkt_head = new_pkt;
+        if (new_pkt == NULL) {              // if we didnt find the header
+            pkt_head = wptr;                // advance pkt head to meet write ptr
+            return 0;
+        }
+        if (wptr - new_pkt < 4)             // if we need more data
+            return 0;
+        if (new_pkt[2] != (self_addr >> 8) || new_pkt[3] != (self_addr & 0xff)) {       // if msg is not for us
+            pkt_head = new_pkt + 1;
+            continue;
+        }
+        uint8_t plen = new_pkt[1];
+        if (plen > DRF_ZIGBEE_MAX_PKT_SZ) {         // if its bigger than permissible packet size
+            pkt_head = new_pkt + 1;
+            continue;
+        }
+        if (plen + 4 + 2 > wptr - new_pkt)          // if we need more data to complete the packet
+            return 0;
+        if (plen == 0) {
+            pkt_head = 4 + new_pkt + plen + 2;      // no zero-length packets allowed
+            continue;
+        }
+        return plen;
+    }
+    return 0;
 }
 
 /* First tries to restart module using its reset pin if one was given,
