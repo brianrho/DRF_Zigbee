@@ -22,7 +22,7 @@
 #define DRF_ZIGBEE_INTER_PACKET_INTERVAL    50
 #define DRF_ZIGBEE_RESET_DELAY              3000
 
-#define DRF_ZIGBEE_BUF_SZ                   (64)    //(DRF_ZIGBEE_MAX_PKT_SZ + 4 + 2)
+#define DRF_ZIGBEE_BUF_SZ                   (32)
 #define DRF_ZIGBEE_DATA_TRANSFER_CMD        0xFD
 
 #define DRF_ZIGBEE_JOIN_ANY                 0xFFFF
@@ -30,8 +30,7 @@
 #define DRF_ZIGBEE_NO_ADDR                  0xFFFE
 #define DRF_ZIGBEE_COORDINATOR_ADDR         0x0000
 
-#define DRF_ZIGBEE_READ_FAIL                (-1)
-#define DRF_ZIGBEE_READ_ZERO                (-2)
+#define DRF_ZIGBEE_READ_INCOMPLETE          (-1)
 
 typedef enum {
     DRF_BAUD_9600 = 1,
@@ -39,7 +38,12 @@ typedef enum {
     DRF_BAUD_38400,
     DRF_BAUD_57600,
     DRF_BAUD_115200
-} DRF_BAUD_t;
+} drf_baud_e;
+
+typedef enum {
+	DRF_STATE_READ_HEADER,
+	DRF_STATE_READ_CONTENTS,
+} drf_state_e;
 
 class DRF_Zigbee {
     public:
@@ -48,17 +52,15 @@ class DRF_Zigbee {
         uint16_t write(uint8_t c, uint16_t to_addr = DRF_ZIGBEE_COORDINATOR_ADDR);
         uint16_t write(const uint8_t * data, uint16_t len, uint16_t to_addr = DRF_ZIGBEE_COORDINATOR_ADDR);
         uint16_t write_packet(const uint8_t * data, uint16_t len, uint16_t to_addr);
-        int16_t read_packet(uint8_t * data, uint16_t len, uint16_t * from_addr);
+        int16_t read_packet(uint8_t * data, uint16_t len, uint16_t * from_addr = NULL, uint16_t * to_addr = NULL);
         uint16_t available(void);
-        uint16_t unread_available(void);
-        uint16_t pkt_available(void);
         #if defined(ARDUINO_ARCH_ESP32) || defined(ARDUINO_ARCH_ESP8266)
             uint16_t buffered_write(const uint8_t * data, uint16_t len, uint16_t to_addr);
             void flush(void);
         #endif
         void set_pan_id(uint16_t _pan_id);
         uint16_t get_pan_id(void);
-        void set_baud_rate(DRF_BAUD_t baud);
+        void set_baud_rate(drf_baud_e baud);
         uint16_t get_self_address(void);
         void reset(void);
 
@@ -79,10 +81,8 @@ class DRF_Zigbee {
         
         uint8_t rst_pin;
 
-        uint8_t * pkt_head;
-        uint8_t * wptr;
-
         Stream * port;
+        drf_state_e read_state;
 };
 
 #endif
