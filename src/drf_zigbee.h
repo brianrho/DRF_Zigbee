@@ -25,8 +25,9 @@
 #define DRF_ZIGBEE_BUF_SZ                   (32)
 #define DRF_ZIGBEE_DATA_TRANSFER_CMD        0xFD
 
-#define DRF_ZIGBEE_JOIN_ANY                 0xFFFF
-#define DRF_ZIGBEE_ANY_ADDR                 0xFFFE
+#define DRF_ZIGBEE_DISCOVER_PANID           0xFFFF
+#define DRF_ZIGBEE_NO_PANID                 0xFFFE
+#define DRF_ZIGBEE_BCAST_ADDR				0xFFFF
 #define DRF_ZIGBEE_NO_ADDR                  0xFFFE
 #define DRF_ZIGBEE_COORDINATOR_ADDR         0x0000
 
@@ -47,15 +48,16 @@ typedef enum {
 
 class DRF_Zigbee {
     public:
-        DRF_Zigbee(uint8_t _rst_pin = 0);
-        bool begin(Stream * ss, uint16_t _pan_id = 0, uint16_t timeout = 0);
+        DRF_Zigbee(Stream * ss, uint8_t _rst_pin = 0);
+        bool begin(uint16_t _pan_id = 0);
         uint16_t write(uint8_t c, uint16_t to_addr = DRF_ZIGBEE_COORDINATOR_ADDR);
         uint16_t write(const uint8_t * data, uint16_t len, uint16_t to_addr = DRF_ZIGBEE_COORDINATOR_ADDR);
-        uint16_t write_packet(const uint8_t * data, uint16_t len, uint16_t to_addr);
+        uint16_t write_packet(const uint8_t * data, uint16_t len, uint16_t to_addr = DRF_ZIGBEE_COORDINATOR_ADDR);
         int16_t read_packet(uint8_t * data, uint16_t len, uint16_t * from_addr = NULL, uint16_t * to_addr = NULL);
         uint16_t available(void);
         #if defined(ARDUINO_ARCH_ESP32) || defined(ARDUINO_ARCH_ESP8266)
-            uint16_t buffered_write(const uint8_t * data, uint16_t len, uint16_t to_addr);
+            uint16_t buffered_write(const uint8_t * data, uint16_t len, uint16_t to_addr = DRF_ZIGBEE_COORDINATOR_ADDR);
+            uint16_t buffered_write_packet(const uint8_t * data, uint16_t len, uint16_t to_addr = DRF_ZIGBEE_COORDINATOR_ADDR);
             void flush(void);
         #endif
         void set_pan_id(uint16_t _pan_id);

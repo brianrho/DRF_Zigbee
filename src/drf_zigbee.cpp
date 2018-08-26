@@ -4,19 +4,10 @@
 #include <string.h>
 #include "drf_zigbee.h"
 
-// Because there's no memchr in ESP8266 core
-static uint8_t * memchr2(void * p, uint8_t ch, size_t size)
-{
-    uint8_t * ptr = (uint8_t *)p;
-    for (size_t i = 0; i < size; i++)
-        if (ptr[i] == ch)
-            return ptr + i;
-    return NULL;
-}
-
 #if !defined(ARDUINO_ARCH_ESP32) && !defined(ARDUINO_ARCH_ESP8266)
-DRF_Zigbee::DRF_Zigbee(uint8_t _rst_pin) : rst_pin(_rst_pin),
-                                           read_state(DRF_STATE_READ_HEADER)
+DRF_Zigbee::DRF_Zigbee(Stream * ss, uint8_t _rst_pin) : 
+    rst_pin(_rst_pin), port(ss),
+    read_state(DRF_STATE_READ_HEADER)
 {
     if (rst_pin) {
         pinMode(rst_pin, OUTPUT);
@@ -25,9 +16,10 @@ DRF_Zigbee::DRF_Zigbee(uint8_t _rst_pin) : rst_pin(_rst_pin),
 }
 
 #else
-DRF_Zigbee::DRF_Zigbee(uint8_t _rst_pin) : out_fifo(_out_buf, DRF_ZIGBEE_MAX_BUFFERED_PKTS), 
-                                           rst_pin(_rst_pin),
-                                           last_send(0), read_state(DRF_STATE_READ_HEADER)
+DRF_Zigbee::DRF_Zigbee(Stream * ss, uint8_t _rst_pin) : 
+    out_fifo(_out_buf, DRF_ZIGBEE_MAX_BUFFERED_PKTS), 
+    rst_pin(_rst_pin), last_send(0), 
+    port(ss), read_state(DRF_STATE_READ_HEADER)
 {
     if (rst_pin) {
         pinMode(rst_pin, OUTPUT);
@@ -37,13 +29,8 @@ DRF_Zigbee::DRF_Zigbee(uint8_t _rst_pin) : out_fifo(_out_buf, DRF_ZIGBEE_MAX_BUF
 #endif
 
 // Timeout should be at least 500ms; can probably be shortened with more tests
-bool DRF_Zigbee::begin(Stream * ss, uint16_t _pan_id, uint16_t timeout) {
-    port = ss;
-    
-    if (timeout)
-        port->setTimeout(timeout);
-    else
-        port->setTimeout(DRF_ZIGBEE_DEFAULT_TIMEOUT);
+bool DRF_Zigbee::begin(uint16_t _pan_id) {
+    port->setTimeout(DRF_ZIGBEE_DEFAULT_TIMEOUT);
     
     reset();
     
@@ -120,7 +107,7 @@ uint16_t DRF_Zigbee::write_packet(const uint8_t * data, uint16_t len, uint16_t t
     uint8_t to_write;
     obuf[0] = DRF_ZIGBEE_DATA_TRANSFER_CMD;
 
-    if (!len)               // no zero-length writes allowed
+    if (len == 0)               // no zero-length writes allowed
         return 0;
     
     to_write = (len > DRF_ZIGBEE_MAX_PKT_SZ) ? DRF_ZIGBEE_MAX_PKT_SZ : len;
@@ -129,6 +116,8 @@ uint16_t DRF_Zigbee::write_packet(const uint8_t * data, uint16_t len, uint16_t t
     obuf[2] = (uint8_t)(to_addr >> 8); obuf[3] = (uint8_t)(to_addr & 0xff);
     memcpy(&obuf[4], data, to_write);
     port->write(obuf, to_write + 4);
+    
+    delay(DRF_ZIGBEE_INTER_PACKET_INTERVAL);
 
     return to_write;
 }
@@ -163,7 +152,27 @@ uint16_t DRF_Zigbee::buffered_write(const uint8_t * data, uint16_t len, uint16_t
     return written;
 }
 
-/* Should be called regularly (ideally every DRF_ZIGBEE_INTER_PACKET_INTERVAL ms) to dispatch packets
+/* Just like buffered_write(), except it buffers only one packet
+ * Returns number of bytes in buffered packet
+ */
+uint16_t DRF_Zigbee::buffered_write_packet(const uint8_t * data, uint16_t len, uint16_t to_addr) {
+    while (out_fifo.full()) {                       // chill till there's space
+        flush();
+        delay(1);
+    }
+    
+    uint8_t to_write = (len > DRF_ZIGBEE_MAX_PKT_SZ) ? DRF_ZIGBEE_MAX_PKT_SZ : len;
+
+    temp_pkt.len = to_write;
+    temp_pkt.dest = to_addr;
+    memcpy(temp_pkt.bytes, data, to_write);
+    out_fifo.enqueue(&temp_pkt);
+
+    return to_write;
+}
+
+/* Should be called as often as possible 
+ * (ideally every DRF_ZIGBEE_INTER_PACKET_INTERVAL ms) to dispatch packets
  */
 void DRF_Zigbee::flush(void) {
     if (out_fifo.available() == 0)
@@ -246,9 +255,6 @@ int16_t DRF_Zigbee::read_packet(uint8_t * data, uint16_t len, uint16_t * from_ad
  * there's nothing useful to read
  */
 uint16_t DRF_Zigbee::available(void) {
-    #if defined(ARDUINO_ARCH_ESP32) || defined(ARDUINO_ARCH_ESP8266)
-        flush();
-    #endif
     return port->available();
 }
 
@@ -275,7 +281,7 @@ void DRF_Zigbee::reset(void) {
     
     delay(DRF_ZIGBEE_RESET_DELAY);
     
-    while (port->read() != -1);
+    while (port->read() != -1) yield();
     read_state = DRF_STATE_READ_HEADER;
 }
 
@@ -291,6 +297,8 @@ void DRF_Zigbee::set_pan_id(uint16_t _pan_id) {
         chksum += obuf[i];
     }
     obuf[6] = (uint8_t)(chksum & 0xff);
+    
+    while (port->read() != -1) yield();
     port->write(obuf, 7);
     delay(DRF_ZIGBEE_INTER_PACKET_INTERVAL);
     
@@ -302,9 +310,7 @@ void DRF_Zigbee::set_pan_id(uint16_t _pan_id) {
 }
 
 // Gets module's pan id
-uint16_t DRF_Zigbee::get_pan_id(void) {
-    while (port->read() != -1);
-    
+uint16_t DRF_Zigbee::get_pan_id(void) {    
     const uint8_t preamble[] = {0xfc, 0x0, 0x91, 0x3, 0xa3, 0xb3};
     memcpy(obuf, preamble, 6);
 
@@ -313,6 +319,8 @@ uint16_t DRF_Zigbee::get_pan_id(void) {
         chksum += obuf[i];
     }
     obuf[6] = (uint8_t)(chksum & 0xff);
+    
+    while (port->read() != -1) yield();
     port->write(obuf, 7);
     delay(DRF_ZIGBEE_INTER_PACKET_INTERVAL);
     
@@ -342,9 +350,7 @@ void DRF_Zigbee::set_baud_rate(drf_baud_e baud) {
 }
 
 // Gets module's short address
-uint16_t DRF_Zigbee::get_self_address(void) {
-    while (port->read() != -1);
-    
+uint16_t DRF_Zigbee::get_self_address(void) {    
     const uint8_t preamble[]  = {0xfc, 0x00, 0x91, 0x04, 0xC4, 0xD4};
     memcpy(obuf, preamble, 6);
 
@@ -353,6 +359,8 @@ uint16_t DRF_Zigbee::get_self_address(void) {
         chksum += obuf[i];
     }
     obuf[6] = (uint8_t)(chksum & 0xff);
+    
+    while (port->read() != -1) yield();
     port->write(obuf, 7);
     delay(DRF_ZIGBEE_INTER_PACKET_INTERVAL);
     

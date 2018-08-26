@@ -27,7 +27,7 @@
   SoftwareSerial softy(4, 5);
 #endif
 
-DRF_Zigbee bee;
+DRF_Zigbee bee(&softy);
 
 char recvbuf[RECV_BUF_SZ];
 
@@ -40,7 +40,7 @@ void setup(void) {
       softy.begin(38400);
     #endif
     
-    if (!bee.begin(&softy)) {
+    if (!bee.begin()) {
         Serial.println("Zigbee init failed.");
         while (1) yield();
     }
