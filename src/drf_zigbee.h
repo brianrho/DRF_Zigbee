@@ -7,7 +7,7 @@
     #include "Stream.h"
 #endif
 
-#if defined(ARDUINO_ARCH_ESP32) || defined(ARDUINO_ARCH_ESP8266)
+#if defined(ARDUINO_ARCH_ESP32) || defined(ARDUINO_ARCH_ESP8266) || defined(ARDUINO_ARCH_STM32)
     #include "drf_fifo.h"
     #define DRF_ZIGBEE_MAX_PKT_SZ           (DRF_PKT_SZ)
     #define DRF_ZIGBEE_MAX_BUFFERED_PKTS    32
@@ -55,7 +55,7 @@ class DRF_Zigbee {
         uint16_t write_packet(const uint8_t * data, uint16_t len, uint16_t to_addr = DRF_ZIGBEE_COORDINATOR_ADDR);
         int16_t read_packet(uint8_t * data, uint16_t len, uint16_t * from_addr = NULL, uint16_t * to_addr = NULL);
         uint16_t available(void);
-        #if defined(ARDUINO_ARCH_ESP32) || defined(ARDUINO_ARCH_ESP8266)
+        #if defined(ARDUINO_ARCH_ESP32) || defined(ARDUINO_ARCH_ESP8266) || defined(ARDUINO_ARCH_STM32)
             uint16_t buffered_write(const uint8_t * data, uint16_t len, uint16_t to_addr = DRF_ZIGBEE_COORDINATOR_ADDR);
             uint16_t buffered_write_packet(const uint8_t * data, uint16_t len, uint16_t to_addr = DRF_ZIGBEE_COORDINATOR_ADDR);
             void flush(void);
@@ -70,7 +70,7 @@ class DRF_Zigbee {
         uint8_t ibuf[DRF_ZIGBEE_BUF_SZ];
         uint8_t obuf[DRF_ZIGBEE_BUF_SZ];
         
-        #if defined(ARDUINO_ARCH_ESP32) || defined(ARDUINO_ARCH_ESP8266)
+        #if defined(ARDUINO_ARCH_ESP32) || defined(ARDUINO_ARCH_ESP8266) || defined(ARDUINO_ARCH_STM32)
             DRFFifo out_fifo;
             drf_packet_t _out_buf[DRF_ZIGBEE_MAX_BUFFERED_PKTS];
             drf_packet_t temp_pkt;

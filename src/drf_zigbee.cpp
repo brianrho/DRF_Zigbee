@@ -4,18 +4,8 @@
 #include <string.h>
 #include "drf_zigbee.h"
 
-#if !defined(ARDUINO_ARCH_ESP32) && !defined(ARDUINO_ARCH_ESP8266)
-DRF_Zigbee::DRF_Zigbee(Stream * ss, uint8_t _rst_pin) : 
-    rst_pin(_rst_pin), port(ss),
-    read_state(DRF_STATE_READ_HEADER)
-{
-    if (rst_pin) {
-        pinMode(rst_pin, OUTPUT);
-        digitalWrite(rst_pin, HIGH);
-    }
-}
+#if defined(ARDUINO_ARCH_ESP32) || defined(ARDUINO_ARCH_ESP8266) || defined(ARDUINO_ARCH_STM32)
 
-#else
 DRF_Zigbee::DRF_Zigbee(Stream * ss, uint8_t _rst_pin) : 
     out_fifo(_out_buf, DRF_ZIGBEE_MAX_BUFFERED_PKTS), 
     rst_pin(_rst_pin), last_send(0), 
@@ -26,6 +16,19 @@ DRF_Zigbee::DRF_Zigbee(Stream * ss, uint8_t _rst_pin) :
         digitalWrite(rst_pin, HIGH);
     }
 }
+
+#else
+
+DRF_Zigbee::DRF_Zigbee(Stream * ss, uint8_t _rst_pin) : 
+    rst_pin(_rst_pin), port(ss),
+    read_state(DRF_STATE_READ_HEADER)
+{
+    if (rst_pin) {
+        pinMode(rst_pin, OUTPUT);
+        digitalWrite(rst_pin, HIGH);
+    }
+}
+
 #endif
 
 // Timeout should be at least 500ms; can probably be shortened with more tests
@@ -122,11 +125,11 @@ uint16_t DRF_Zigbee::write_packet(const uint8_t * data, uint16_t len, uint16_t t
     return to_write;
 }
 
-#if defined(ARDUINO_ARCH_ESP32) || defined(ARDUINO_ARCH_ESP8266)
+#if defined(ARDUINO_ARCH_ESP32) || defined(ARDUINO_ARCH_ESP8266) || defined(ARDUINO_ARCH_STM32)
 /* Just like write() except there's no delay,
  * Packets get buffered and are finally sent when flush() is called
  * At most 32 packets of DRF_ZIGBEE_MAX_PKT_SZ bytes are buffered (1k bytes for now)
- * For now, only supported for ESP8266 and ESP32 since they can spare the RAM
+ * For now, only supported for ESP8266, ESP32 and STM32 since they can spare the RAM
  * Returns number of bytes buffered
  */
  
